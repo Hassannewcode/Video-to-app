@@ -21,7 +21,40 @@ export default function HistoryGallery({
   onClearHistory,
 }: HistoryGalleryProps) {
   if (!history || history.length === 0) {
-    return null;
+    return (
+      <div className="history-gallery">
+        <div className="gallery-header">
+          <h2 className="gallery-title">{title}</h2>
+        </div>
+        <div className="history-empty">
+          <p>Your generated apps will appear here.</p>
+        </div>
+        <style>{`
+        .history-gallery {
+          width: 100%;
+        }
+        .gallery-header {
+          margin-bottom: 1rem;
+        }
+        .gallery-title {
+          color: var(--color-text);
+          font-size: 1.5rem;
+          font-weight: 600;
+          padding-left: 0.5rem;
+          border-left: 3px solid var(--color-accent-secondary);
+          text-shadow: 0 0 5px var(--color-accent-secondary);
+        }
+        .history-empty {
+          padding: 2rem 1rem;
+          text-align: center;
+          color: var(--color-text-secondary);
+          border: 1px dashed var(--color-border);
+          border-radius: 8px;
+          margin-top: 1rem;
+        }
+      `}</style>
+      </div>
+    );
   }
 
   return (
@@ -49,7 +82,6 @@ export default function HistoryGallery({
       <style>{`
         .history-gallery {
           width: 100%;
-          margin-top: 1.5rem;
         }
 
         .gallery-header {

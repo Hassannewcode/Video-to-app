@@ -180,172 +180,203 @@ export default function App() {
 
   return (
     <>
-      <main className="main-container">
-        <div className="left-side">
-          <div
-            className="header-content fade-in-up"
-            style={{animationDelay: '0.1s'}}>
-            <h1 className="headline">VIDEO-DRIVEN APPS</h1>
-            <p className="subtitle">
-              Generate interactive learning experiences from YouTube content
-              with AI
-            </p>
-            <p className="attribution">
-              An experiment by <strong>Aaron Wade</strong>
-            </p>
-          </div>
+      <div className="app-wrapper">
+        <aside className="history-sidebar">
+          <HistoryGallery
+            history={history}
+            onSelectItem={handleHistorySelect}
+            onClearHistory={handleClearHistory}
+          />
+        </aside>
 
-          <div
-            className="input-section fade-in-up"
-            style={{animationDelay: '0.2s'}}>
-            <label htmlFor="youtube-url" className="input-label">
-              Paste a YouTube URL
-            </label>
-            <div className="input-row">
-              <input
-                ref={inputRef}
-                id="youtube-url"
-                className="youtube-input"
-                type="text"
-                placeholder="https://www.youtube.com/watch?v=..."
-                defaultValue={PRESEED_CONTENT ? defaultExample?.url : ''}
-                disabled={isGenerating}
-                onKeyDown={handleKeyDown}
-                onChange={() => {
-                  setError('');
-                  setVideoUrl('');
-                  setSelectedExample(null);
-                  setPreSeededFiles(undefined);
-                  setPreSeededSpec(undefined);
-                }}
-              />
-              <button
-                onClick={handleSubmit}
-                className="button-primary submit-button"
-                disabled={isGenerating}>
-                {isGenerating && <div className="button-loader"></div>}
-                <span className="button-text">
-                  {urlValidating
-                    ? 'Validating'
-                    : contentLoading
-                    ? 'Generating'
-                    : 'Generate'}
-                </span>
-              </button>
+        <main className="main-container">
+          <div className="left-side">
+            <div
+              className="header-content fade-in-up"
+              style={{animationDelay: '0.1s'}}>
+              <h1 className="headline">VIDEO-DRIVEN APPS</h1>
+              <p className="subtitle">
+                Generate interactive learning experiences from YouTube content
+                with AI
+              </p>
+              <p className="attribution">
+                An experiment by <strong>Aaron Wade</strong>
+              </p>
             </div>
-            {error && <div className="error-message">{error}</div>}
-          </div>
 
-          <div
-            className="video-container fade-in-up"
-            style={{animationDelay: '0.3s'}}>
-            {videoUrl ? (
-              <iframe
-                className="video-iframe"
-                src={getYoutubeEmbedUrl(videoUrl)}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen></iframe>
-            ) : (
-              <div className="video-placeholder">
-                <svg
-                  width="80"
-                  height="80"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg">
-                  <style>{`
+            <div
+              className="input-section fade-in-up"
+              style={{animationDelay: '0.2s'}}>
+              <label htmlFor="youtube-url" className="input-label">
+                Paste a YouTube URL
+              </label>
+              <div className="input-row">
+                <input
+                  ref={inputRef}
+                  id="youtube-url"
+                  className="youtube-input"
+                  type="text"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  defaultValue={PRESEED_CONTENT ? defaultExample?.url : ''}
+                  disabled={isGenerating}
+                  onKeyDown={handleKeyDown}
+                  onChange={() => {
+                    setError('');
+                    setVideoUrl('');
+                    setSelectedExample(null);
+                    setPreSeededFiles(undefined);
+                    setPreSeededSpec(undefined);
+                  }}
+                />
+                <button
+                  onClick={handleSubmit}
+                  className="button-primary submit-button"
+                  disabled={isGenerating}>
+                  {isGenerating && <div className="button-loader"></div>}
+                  <span className="button-text">
+                    {urlValidating
+                      ? 'Validating'
+                      : contentLoading
+                      ? 'Generating'
+                      : 'Generate'}
+                  </span>
+                </button>
+              </div>
+              {error && <div className="error-message">{error}</div>}
+            </div>
+
+            <div
+              className="video-container fade-in-up"
+              style={{animationDelay: '0.3s'}}>
+              {videoUrl ? (
+                <iframe
+                  className="video-iframe"
+                  src={getYoutubeEmbedUrl(videoUrl)}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen></iframe>
+              ) : (
+                <div className="video-placeholder">
+                  <svg
+                    width="80"
+                    height="80"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <style>{`
                     .pulse { animation: pulse 2s infinite ease-in-out; }
                     @keyframes pulse { 0%, 100% { opacity: 0.4; transform: scale(0.95); } 50% { opacity: 1; transform: scale(1.05); } }
                   `}</style>
-                  <g className="pulse">
-                    <path
-                      d="M16.3467 10.6533C17.4133 11.2667 17.4133 12.7333 16.3467 13.3467L10.96 16.5133C9.89333 17.1267 8.60667 16.3933 8.60667 15.1667V8.83333C8.60667 7.60667 9.89333 6.87333 10.96 7.48667L16.3467 10.6533Z"
-                      fill="currentColor"
-                    />
-                    <rect
-                      x="3"
-                      y="3"
-                      width="18"
-                      height="18"
-                      rx="4"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                  </g>
-                </svg>
-                <span>Video appears here</span>
-              </div>
-            )}
-          </div>
-
-          <div
-            className="gallery-container desktop-gallery-container fade-in-up"
-            style={{animationDelay: '0.4s'}}>
-            {exampleGallery}
-            <HistoryGallery
-              history={history}
-              onSelectItem={handleHistorySelect}
-              onClearHistory={handleClearHistory}
-            />
-          </div>
-        </div>
-
-        <div className="right-side">
-          <div
-            className="content-area slide-in-right"
-            style={{animationDelay: '0.5s'}}>
-            {videoUrl ? (
-              <ContentContainer
-                key={reloadCounter}
-                contentBasis={videoUrl}
-                onLoadingStateChange={handleContentLoadingStateChange}
-                preSeededSpec={preSeededSpec}
-                preSeededFiles={preSeededFiles}
-                onGenerationComplete={handleGenerationComplete}
-                ref={contentContainerRef}
-              />
-            ) : (
-              <div className="content-placeholder">
-                <div className="placeholder-grid">
-                  {Array.from({length: 100}).map((_, i) => (
-                    <div
-                      key={i}
-                      className="placeholder-dot"
-                      style={{
-                        animationDelay: `${Math.random() * 2}s`,
-                      }}></div>
-                  ))}
+                    <g className="pulse">
+                      <path
+                        d="M16.3467 10.6533C17.4133 11.2667 17.4133 12.7333 16.3467 13.3467L10.96 16.5133C9.89333 17.1267 8.60667 16.3933 8.60667 15.1667V8.83333C8.60667 7.60667 9.89333 6.87333 10.96 7.48667L16.3467 10.6533Z"
+                        fill="currentColor"
+                      />
+                      <rect
+                        x="3"
+                        y="3"
+                        width="18"
+                        height="18"
+                        rx="4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      />
+                    </g>
+                  </svg>
+                  <span>Video appears here</span>
                 </div>
-                <p>
-                  {urlValidating
-                    ? 'Validating URL...'
-                    : 'Paste a YouTube URL or select an example to begin'}
-                </p>
-              </div>
-            )}
+              )}
+            </div>
+
+            <div
+              className="gallery-container desktop-gallery-container fade-in-up"
+              style={{animationDelay: '0.4s'}}>
+              {exampleGallery}
+            </div>
           </div>
 
-          <div
-            className="gallery-container mobile-gallery-container fade-in-up"
-            style={{animationDelay: '0.6s'}}>
-            {exampleGallery}
-            <HistoryGallery
-              history={history}
-              onSelectItem={handleHistorySelect}
-              onClearHistory={handleClearHistory}
-            />
-          </div>
-        </div>
-      </main>
+          <div className="right-side">
+            <div
+              className="content-area slide-in-right"
+              style={{animationDelay: '0.5s'}}>
+              {videoUrl ? (
+                <ContentContainer
+                  key={reloadCounter}
+                  contentBasis={videoUrl}
+                  onLoadingStateChange={handleContentLoadingStateChange}
+                  preSeededSpec={preSeededSpec}
+                  preSeededFiles={preSeededFiles}
+                  onGenerationComplete={handleGenerationComplete}
+                  ref={contentContainerRef}
+                />
+              ) : (
+                <div className="content-placeholder">
+                  <div className="placeholder-grid">
+                    {Array.from({length: 100}).map((_, i) => (
+                      <div
+                        key={i}
+                        className="placeholder-dot"
+                        style={{
+                          animationDelay: `${Math.random() * 2}s`,
+                        }}></div>
+                    ))}
+                  </div>
+                  <p>
+                    {urlValidating
+                      ? 'Validating URL...'
+                      : 'Paste a YouTube URL or select an example to begin'}
+                  </p>
+                </div>
+              )}
+            </div>
 
+            <div
+              className="gallery-container mobile-gallery-container fade-in-up"
+              style={{animationDelay: '0.6s'}}>
+              {exampleGallery}
+            </div>
+          </div>
+        </main>
+      </div>
       <style>{`
+        .app-wrapper {
+          display: flex;
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+          background-color: var(--color-background);
+        }
+
+        .history-sidebar {
+          width: 300px;
+          min-width: 300px;
+          height: 100%;
+          background-color: var(--color-background);
+          border-right: 1px solid var(--color-border);
+          padding: 1.5rem 1rem 1.5rem 1.5rem;
+          box-sizing: border-box;
+          overflow-y: auto;
+          scrollbar-width: thin;
+          scrollbar-color: var(--color-accent-secondary) transparent;
+          transition: width 0.3s ease-in-out, min-width 0.3s ease-in-out;
+          z-index: 10;
+        }
+
+        .history-sidebar::-webkit-scrollbar {
+          width: 6px;
+        }
+        .history-sidebar::-webkit-scrollbar-thumb {
+          background-color: var(--color-accent-secondary);
+          border-radius: 3px;
+        }
+
         .main-container {
           padding: 2rem;
           display: flex;
           gap: 2rem;
-          height: 100vh;
+          height: 100%;
           box-sizing: border-box;
-          overflow: hidden;
+          flex: 1;
+          min-width: 0;
         }
 
         .left-side {
@@ -585,16 +616,36 @@ export default function App() {
 
         /* Responsive styles */
         @media (max-width: 1200px) {
+          .history-sidebar {
+            width: 280px;
+            min-width: 280px;
+          }
           .left-side {
             min-width: 320px;
-            width: 35%;
+            width: 45%;
           }
         }
         @media (max-width: 1024px) {
+          .app-wrapper {
+            flex-direction: column;
+            height: auto;
+            overflow: visible;
+          }
+          .history-sidebar {
+            width: 100%;
+            min-width: 100%;
+            height: auto;
+            max-height: 40vh;
+            border-right: none;
+            border-bottom: 1px solid var(--color-border);
+            padding: 1rem;
+          }
           .main-container {
             flex-direction: column;
             height: auto;
             overflow: visible;
+            padding: 1rem;
+            gap: 1rem;
           }
           .left-side,
           .right-side {

@@ -7,6 +7,7 @@
 import Editor from '@monaco-editor/react';
 import React, {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useState,
@@ -77,6 +78,8 @@ export default forwardRef(function ContentContainer(
   // Generation state
   const [step, setStep] = useState<GenerationStep>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [reviewAttempt, setReviewAttempt] = useState(0);
+  const [reviewLog, setReviewLog] = useState<string[]>([]);
 
   // Generated artifacts
   const [analysis, setAnalysis] = useState<object | null>(null);
@@ -146,33 +149,81 @@ export default forwardRef(function ContentContainer(
     </script>
   `;
 
-  const buildPreviewHtml = (fileSet: File[]): string => {
-    const htmlFile = fileSet.find(
-      (f) => f.name.toLowerCase() === 'index.html',
-    );
-    if (!htmlFile) return '<p>No index.html file found to render.</p>';
+  const buildPreviewHtml = useCallback(
+    (fileSet: File[]): string => {
+      const htmlFile = fileSet.find(
+        (f) => f.name.toLowerCase() === 'index.html',
+      );
+      if (!htmlFile) return '<p>No index.html file found to render.</p>';
 
-    let htmlContent = htmlFile.content;
+      let htmlContent = htmlFile.content;
 
-    // Inject CSS
-    const cssFiles = fileSet.filter((f) => f.name.toLowerCase().endsWith('.css'));
-    const cssLinks = cssFiles
-      .map((f) => `<style>\n${f.content}\n</style>`)
-      .join('\n');
-    htmlContent = htmlContent.replace(
-      '</head>',
-      `${CONSOLE_INJECT_SCRIPT}\n${cssLinks}\n</head>`,
-    );
+      // Inject CSS
+      const cssFiles = fileSet.filter((f) =>
+        f.name.toLowerCase().endsWith('.css'),
+      );
+      const cssLinks = cssFiles
+        .map((f) => `<style>\n${f.content}\n</style>`)
+        .join('\n');
+      htmlContent = htmlContent.replace(
+        '</head>',
+        `${CONSOLE_INJECT_SCRIPT}\n${cssLinks}\n</head>`,
+      );
 
-    // Inject JS
-    const jsFiles = fileSet.filter((f) => f.name.toLowerCase().endsWith('.js'));
-    const jsScripts = jsFiles
-      .map((f) => `<script>\n${f.content}\n</script>`)
-      .join('\n');
-    htmlContent = htmlContent.replace('</body>', `${jsScripts}\n</body>`);
+      // Inject JS
+      const jsFiles = fileSet.filter((f) => f.name.toLowerCase().endsWith('.js'));
+      const jsScripts = jsFiles
+        .map((f) => `<script>\n${f.content}\n</script>`)
+        .join('\n');
+      htmlContent = htmlContent.replace('</body>', `${jsScripts}\n</body>`);
 
-    return htmlContent;
-  };
+      return htmlContent;
+    },
+    [CONSOLE_INJECT_SCRIPT],
+  );
+
+  const captureRuntimeErrors = useCallback(
+    (files: File[]): Promise<ConsoleMessage[]> => {
+      return new Promise((resolve) => {
+        if (!files || files.length === 0) {
+          resolve([]);
+          return;
+        }
+
+        const tempIframe = document.createElement('iframe');
+        tempIframe.style.display = 'none';
+        tempIframe.sandbox.add('allow-scripts');
+        const tempErrors: ConsoleMessage[] = [];
+
+        const handleTempMessage = (event: MessageEvent) => {
+          if (event.source !== tempIframe.contentWindow) return;
+          if (event.data && event.data.source === 'iframe-console') {
+            const {type, args} = event.data;
+            if (type === 'error') {
+              tempErrors.push({type, args, timestamp: new Date()});
+            }
+          }
+        };
+        window.addEventListener('message', handleTempMessage);
+
+        const cleanupAndResolve = () => {
+          window.removeEventListener('message', handleTempMessage);
+          if (document.body.contains(tempIframe)) {
+            document.body.removeChild(tempIframe);
+          }
+          resolve(tempErrors);
+        };
+
+        tempIframe.onload = () => setTimeout(cleanupAndResolve, 1500);
+        tempIframe.onerror = cleanupAndResolve;
+        setTimeout(cleanupAndResolve, 3000); // Failsafe timeout
+
+        tempIframe.srcdoc = buildPreviewHtml(files);
+        document.body.appendChild(tempIframe);
+      });
+    },
+    [buildPreviewHtml],
+  );
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -193,6 +244,7 @@ export default forwardRef(function ContentContainer(
   useEffect(() => {
     async function generateContent() {
       setConsoleMessages([]); // Clear console on new generation
+      setReviewLog([]); // Clear review log
 
       if (preSeededSpec && preSeededFiles) {
         setSpec(preSeededSpec);
@@ -207,6 +259,7 @@ export default forwardRef(function ContentContainer(
       }
 
       try {
+        // Step 1: Planning
         setStep('planning');
         const planResponse = await generateText({
           modelName: 'gemini-2.5-flash',
@@ -219,6 +272,7 @@ export default forwardRef(function ContentContainer(
         setSpec(planResult.spec);
         setPlan(planResult.plan);
 
+        // Step 2: Initial Code Generation
         setStep('coding');
         const codePrompt = `${GENERATE_CODE_FROM_PLAN_PROMPT_PREFIX}\n${
           planResult.spec
@@ -234,98 +288,92 @@ export default forwardRef(function ContentContainer(
         });
         const codeResult = parseJSON(codeResponse);
 
-        setStep('reviewing');
-        const initialFiles = codeResult.files || [];
+        // Step 3: Iterative Code Review & Fixing Loop
+        let currentFiles = codeResult.files || [];
+        setFiles(currentFiles); // Show initial code in UI
+        const MAX_REVIEW_ATTEMPTS = 3;
+        let reviewSuccess = false;
 
-        // Capture initial runtime errors by loading code in a hidden iframe
-        const capturedErrors: ConsoleMessage[] = await new Promise(
-          (resolve) => {
-            if (initialFiles.length === 0) {
-              resolve([]);
-              return;
-            }
+        for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt++) {
+          setStep('reviewing');
+          setReviewAttempt(attempt);
 
-            const tempIframe = document.createElement('iframe');
-            tempIframe.style.display = 'none';
-            tempIframe.sandbox.add('allow-scripts');
-            const tempErrors: ConsoleMessage[] = [];
+          const capturedErrors = await captureRuntimeErrors(currentFiles);
 
-            const handleTempMessage = (event: MessageEvent) => {
-              if (event.source !== tempIframe.contentWindow) return;
-              if (event.data && event.data.source === 'iframe-console') {
-                const {type, args} = event.data;
-                if (type === 'error') {
-                  tempErrors.push({type, args, timestamp: new Date()});
-                }
-              }
-            };
-            window.addEventListener('message', handleTempMessage);
+          if (capturedErrors.length === 0) {
+            setReviewLog((prev) => [
+              ...prev,
+              `Attempt ${attempt}: ✅ Success! No runtime errors detected.`,
+            ]);
+            reviewSuccess = true;
+            break; // Exit loop on success
+          }
 
-            const cleanupAndResolve = () => {
-              window.removeEventListener('message', handleTempMessage);
-              if (document.body.contains(tempIframe)) {
-                document.body.removeChild(tempIframe);
-              }
-              resolve(tempErrors);
-            };
+          setReviewLog((prev) => [
+            ...prev,
+            `Attempt ${attempt}: ❗ Found ${
+              capturedErrors.length
+            } error(s). Sending to AI for fixes.`,
+          ]);
 
-            tempIframe.onload = () => setTimeout(cleanupAndResolve, 1500);
-            tempIframe.onerror = cleanupAndResolve;
-            setTimeout(cleanupAndResolve, 3000); // Failsafe timeout
-
-            tempIframe.srcdoc = buildPreviewHtml(initialFiles);
-            document.body.appendChild(tempIframe);
-          },
-        );
-
-        let runtimeErrorsString = 'No runtime errors detected on initial load.';
-        if (capturedErrors.length > 0) {
-          runtimeErrorsString =
+          const runtimeErrorsString =
             'The following runtime errors were detected on initial load:\n' +
             capturedErrors
               .map((e) =>
                 e.args
                   .map((arg) =>
-                    typeof arg === 'object' ? JSON.stringify(arg) : String(arg),
+                    typeof arg === 'object'
+                      ? JSON.stringify(arg, null, 2)
+                      : String(arg),
                   )
                   .join(' '),
               )
               .join('\n');
+
+          const codeToReview = {files: currentFiles};
+          const reviewPrompt = `${REVIEW_CODE_PROMPT_PREFIX}\n${
+            planResult.spec
+          }\n${REVIEW_CODE_PROMPT_SUFFIX}\n${JSON.stringify(
+            codeToReview,
+            null,
+            2,
+          )}\n\nRUNTIME ERRORS:\n---\n${runtimeErrorsString}`;
+
+          const reviewedCodeResponse = await generateText({
+            modelName: 'gemini-2.5-flash',
+            systemInstruction: REVIEW_CODE_SYSTEM_INSTRUCTION,
+            prompt: reviewPrompt,
+          });
+
+          const reviewedCodeResult = parseJSON(reviewedCodeResponse);
+          currentFiles = reviewedCodeResult.files || [];
+          setFiles(currentFiles); // Update UI with the new code attempt
         }
 
-        const reviewPrompt = `${REVIEW_CODE_PROMPT_PREFIX}\n${
-          planResult.spec
-        }\n${REVIEW_CODE_PROMPT_SUFFIX}\n${JSON.stringify(
-          codeResult,
-          null,
-          2,
-        )}\n\nRUNTIME ERRORS:\n---\n${runtimeErrorsString}`;
+        if (!reviewSuccess) {
+          setReviewLog((prev) => [
+            ...prev,
+            `⚠️ Max review attempts reached. The code may still contain errors.`,
+          ]);
+        }
 
-        const reviewedCodeResponse = await generateText({
-          modelName: 'gemini-2.5-flash',
-          systemInstruction: REVIEW_CODE_SYSTEM_INSTRUCTION,
-          prompt: reviewPrompt,
-        });
-
-        const reviewedCodeResult = parseJSON(reviewedCodeResponse);
-        const finalFiles = reviewedCodeResult.files || [];
         setIsReviewed(true);
-        setFiles(finalFiles);
+        setReviewAttempt(0);
+        setFiles(currentFiles);
 
-        // Set active file to index.html or the first file
-        const htmlFile = finalFiles.find(
+        // Finalization
+        const htmlFile = currentFiles.find(
           (f: File) => f.name.toLowerCase() === 'index.html',
         );
-        setActiveFile(htmlFile ? htmlFile.name : finalFiles[0]?.name);
-
-        setRenderHtml(buildPreviewHtml(finalFiles));
+        setActiveFile(htmlFile ? htmlFile.name : currentFiles[0]?.name);
+        setRenderHtml(buildPreviewHtml(currentFiles));
         setStep('ready');
 
         if (onGenerationComplete) {
           onGenerationComplete({
             title: planResult.analysis?.title || 'Generated App',
             spec: planResult.spec,
-            files: finalFiles,
+            files: currentFiles,
           });
         }
       } catch (err) {
@@ -338,7 +386,14 @@ export default forwardRef(function ContentContainer(
     }
 
     generateContent();
-  }, [contentBasis, preSeededSpec, preSeededFiles, onGenerationComplete]);
+  }, [
+    contentBasis,
+    preSeededSpec,
+    preSeededFiles,
+    onGenerationComplete,
+    captureRuntimeErrors,
+    buildPreviewHtml,
+  ]);
 
   useEffect(() => {
     if (renderHtml) {
@@ -449,7 +504,13 @@ export default forwardRef(function ContentContainer(
             {step === 'error' ? (
               renderErrorState()
             ) : step !== 'ready' ? (
-              <CustomLoader text={STEP_MESSAGES[step]} />
+              <CustomLoader
+                text={
+                  step === 'reviewing'
+                    ? `Reviewing and fixing code (Attempt ${reviewAttempt} of 3)...`
+                    : STEP_MESSAGES[step]
+                }
+              />
             ) : (
               <div className="render-iframe-container">
                 <iframe
@@ -468,8 +529,14 @@ export default forwardRef(function ContentContainer(
             selectedClassName="selected-tab-panel">
             {step === 'error' ? (
               renderErrorState()
-            ) : step !== 'ready' ? (
-              <CustomLoader text={STEP_MESSAGES[step]} />
+            ) : step !== 'ready' && files.length === 0 ? (
+              <CustomLoader
+                text={
+                  step === 'reviewing'
+                    ? `Reviewing and fixing code (Attempt ${reviewAttempt} of 3)...`
+                    : STEP_MESSAGES[step]
+                }
+              />
             ) : (
               <div className="vscode-container">
                 <div className="file-explorer">
@@ -534,13 +601,12 @@ export default forwardRef(function ContentContainer(
                 title="4. Code Review & Fix"
                 currentStep={step === 'reviewing'}
                 completed={isReviewed}>
-                {step === 'reviewing' && <div className="mini-loader"></div>}
-                {isReviewed && (
-                  <p>
-                    Code automatically reviewed and fixed using runtime console
-                    feedback.
+                {reviewLog.map((log, index) => (
+                  <p key={index} className="review-log-item">
+                    {log}
                   </p>
-                )}
+                ))}
+                {step === 'reviewing' && <div className="mini-loader"></div>}
               </SpecItem>
             </div>
           </TabPanel>
@@ -716,6 +782,16 @@ export default forwardRef(function ContentContainer(
           font-family: var(--font-technical);
           font-size: 0.9rem;
           color: var(--color-text-secondary);
+        }
+        .review-log-item {
+          font-family: var(--font-technical);
+          font-size: 0.9rem;
+          color: var(--color-text-secondary);
+          margin-bottom: 0.5rem;
+          white-space: pre-wrap;
+        }
+        .review-log-item:last-child {
+          margin-bottom: 0;
         }
         .mini-loader {
           width: 24px;
