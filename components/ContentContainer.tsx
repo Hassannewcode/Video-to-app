@@ -15,18 +15,14 @@ import {Tab, TabList, TabPanel, Tabs} from 'react-tabs';
 
 import {parseJSON} from '@/lib/parse';
 import {
-  ANALYZE_VIDEO_PROMPT,
-  ANALYZE_VIDEO_SYSTEM_INSTRUCTION,
+  ANALYZE_AND_PLAN_PROMPT,
+  ANALYZE_AND_PLAN_SYSTEM_INSTRUCTION,
   GENERATE_CODE_FROM_PLAN_PROMPT_PREFIX,
   GENERATE_CODE_FROM_PLAN_PROMPT_SUFFIX,
   GENERATE_CODE_SYSTEM_INSTRUCTION,
-  GENERATE_SPEC_FROM_ANALYSIS_PROMPT,
-  GENERATE_SPEC_SYSTEM_INSTRUCTION,
   REVIEW_CODE_PROMPT_PREFIX,
   REVIEW_CODE_PROMPT_SUFFIX,
   REVIEW_CODE_SYSTEM_INSTRUCTION,
-  REVIEW_SPEC_AND_PLAN_PROMPT,
-  REVIEW_SPEC_SYSTEM_INSTRUCTION,
 } from '@/lib/prompts';
 import {generateText} from '@/lib/textGeneration';
 import {File} from '@/lib/types';
@@ -51,8 +47,6 @@ type ConsoleMessage = {
 
 type GenerationStep =
   | 'idle'
-  | 'analyzing'
-  | 'spec-generating'
   | 'planning'
   | 'coding'
   | 'reviewing'
@@ -61,9 +55,7 @@ type GenerationStep =
 
 const STEP_MESSAGES: Record<GenerationStep, string> = {
   idle: 'Starting generation...',
-  analyzing: 'Analyzing video...',
-  'spec-generating': 'Generating app specification...',
-  planning: 'Creating implementation plan...',
+  planning: 'Analyzing video and creating app plan...',
   coding: 'Generating code...',
   reviewing: 'Reviewing and fixing code...',
   ready: 'Content ready!',
@@ -215,40 +207,23 @@ export default forwardRef(function ContentContainer(
       }
 
       try {
-        setStep('analyzing');
-        const analysisResponse = await generateText({
-          modelName: 'gemini-2.5-flash',
-          systemInstruction: ANALYZE_VIDEO_SYSTEM_INSTRUCTION,
-          prompt: ANALYZE_VIDEO_PROMPT,
-          videoUrl: contentBasis,
-        });
-        const analysisResult = parseJSON(analysisResponse);
-        setAnalysis(analysisResult);
-
-        setStep('spec-generating');
-        const specResponse = await generateText({
-          modelName: 'gemini-2.5-flash',
-          systemInstruction: GENERATE_SPEC_SYSTEM_INSTRUCTION,
-          prompt: `${GENERATE_SPEC_FROM_ANALYSIS_PROMPT}\n\n${JSON.stringify(
-            analysisResult,
-            null,
-            2,
-          )}`,
-        });
-        setSpec(specResponse);
-
         setStep('planning');
         const planResponse = await generateText({
           modelName: 'gemini-2.5-flash',
-          systemInstruction: REVIEW_SPEC_SYSTEM_INSTRUCTION,
-          prompt: `${REVIEW_SPEC_AND_PLAN_PROMPT}\n\n${specResponse}`,
+          systemInstruction: ANALYZE_AND_PLAN_SYSTEM_INSTRUCTION,
+          prompt: ANALYZE_AND_PLAN_PROMPT,
+          videoUrl: contentBasis,
         });
         const planResult = parseJSON(planResponse);
-        setPlan(planResult);
+        setAnalysis(planResult.analysis);
+        setSpec(planResult.spec);
+        setPlan(planResult.plan);
 
         setStep('coding');
-        const codePrompt = `${GENERATE_CODE_FROM_PLAN_PROMPT_PREFIX}\n${specResponse}\n${GENERATE_CODE_FROM_PLAN_PROMPT_SUFFIX}\n${JSON.stringify(
-          planResult,
+        const codePrompt = `${GENERATE_CODE_FROM_PLAN_PROMPT_PREFIX}\n${
+          planResult.spec
+        }\n${GENERATE_CODE_FROM_PLAN_PROMPT_SUFFIX}\n${JSON.stringify(
+          planResult.plan,
           null,
           2,
         )}`;
@@ -318,7 +293,9 @@ export default forwardRef(function ContentContainer(
               .join('\n');
         }
 
-        const reviewPrompt = `${REVIEW_CODE_PROMPT_PREFIX}\n${specResponse}\n${REVIEW_CODE_PROMPT_SUFFIX}\n${JSON.stringify(
+        const reviewPrompt = `${REVIEW_CODE_PROMPT_PREFIX}\n${
+          planResult.spec
+        }\n${REVIEW_CODE_PROMPT_SUFFIX}\n${JSON.stringify(
           codeResult,
           null,
           2,
@@ -346,8 +323,8 @@ export default forwardRef(function ContentContainer(
 
         if (onGenerationComplete) {
           onGenerationComplete({
-            title: analysisResult?.title || 'Generated App',
-            spec: specResponse,
+            title: planResult.analysis?.title || 'Generated App',
+            spec: planResult.spec,
             files: finalFiles,
           });
         }
@@ -422,11 +399,15 @@ export default forwardRef(function ContentContainer(
         ) : (
           consoleMessages.map((msg, index) => (
             <div key={index} className={`console-message ${msg.type}`}>
-              <span className="timestamp">{msg.timestamp.toLocaleTimeString()}</span>
+              <span className="timestamp">
+                {msg.timestamp.toLocaleTimeString()}
+              </span>
               <div className="message-content">
                 {msg.args.map((arg, i) => (
                   <pre key={i}>
-                    {typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)}
+                    {typeof arg === 'object'
+                      ? JSON.stringify(arg, null, 2)
+                      : String(arg)}
                   </pre>
                 ))}
               </div>
@@ -436,6 +417,9 @@ export default forwardRef(function ContentContainer(
       </div>
     </div>
   );
+
+  const isPlanning = step === 'planning';
+  const planningComplete = !!plan;
 
   return (
     <div className="content-container-wrapper">
@@ -527,27 +511,23 @@ export default forwardRef(function ContentContainer(
             <div className="spec-container">
               <SpecItem
                 title="1. Video Analysis"
-                currentStep={step === 'analyzing'}
-                completed={!!analysis}>
-                {step === 'analyzing' && <div className="mini-loader"></div>}
-                {analysis && (
-                  <pre>{JSON.stringify(analysis, null, 2)}</pre>
-                )}
+                currentStep={isPlanning}
+                completed={planningComplete}>
+                {isPlanning && <div className="mini-loader"></div>}
+                {analysis && <pre>{JSON.stringify(analysis, null, 2)}</pre>}
               </SpecItem>
               <SpecItem
                 title="2. App Specification"
-                currentStep={step === 'spec-generating'}
-                completed={!!spec}>
-                {step === 'spec-generating' && (
-                  <div className="mini-loader"></div>
-                )}
+                currentStep={isPlanning}
+                completed={planningComplete}>
+                {isPlanning && <div className="mini-loader"></div>}
                 {spec && <pre className="spec-text">{spec}</pre>}
               </SpecItem>
               <SpecItem
                 title="3. Implementation Plan"
-                currentStep={step === 'planning'}
-                completed={!!plan}>
-                {step === 'planning' && <div className="mini-loader"></div>}
+                currentStep={isPlanning}
+                completed={planningComplete}>
+                {isPlanning && <div className="mini-loader"></div>}
                 {plan && <pre>{JSON.stringify(plan, null, 2)}</pre>}
               </SpecItem>
               <SpecItem
@@ -555,7 +535,12 @@ export default forwardRef(function ContentContainer(
                 currentStep={step === 'reviewing'}
                 completed={isReviewed}>
                 {step === 'reviewing' && <div className="mini-loader"></div>}
-                {isReviewed && <p>Code automatically reviewed and fixed using runtime console feedback.</p>}
+                {isReviewed && (
+                  <p>
+                    Code automatically reviewed and fixed using runtime console
+                    feedback.
+                  </p>
+                )}
               </SpecItem>
             </div>
           </TabPanel>
