@@ -68,6 +68,19 @@ export const GENERATE_CODE_FROM_PLAN_PROMPT_SUFFIX = `---
 IMPLEMENTATION PLAN:
 ---`;
 
+export const REVIEW_CODE_SYSTEM_INSTRUCTION = `You are a world-class senior frontend engineer specializing in code review and debugging. Your task is to analyze the provided HTML, CSS, and JavaScript files for any bugs, errors, or inconsistencies, taking into account the original specification and any runtime errors that occurred during an initial test run. You should fix them and provide the corrected, production-ready code without changing the core functionality described in the spec. Ensure the app is fully responsive, accessible, and works across modern browsers. The output MUST be a single, valid JSON object with a single key: "files", which is an array of objects, each with "name" and "content".`;
+
+export const REVIEW_CODE_PROMPT_PREFIX = `Based on the provided specification, please review and fix the following code for a web app. Pay close attention to the runtime errors that were captured, as they indicate immediate problems that need to be addressed.
+The output MUST be a single, valid JSON object with a single key: "files", which is an array of objects, each with "name" and "content".
+DO NOT include any explanations or markdown formatting outside of the JSON object.
+
+SPECIFICATION:
+---`;
+
+export const REVIEW_CODE_PROMPT_SUFFIX = `---
+CODE TO REVIEW:
+---`;
+
 // Legacy prompts for pre-seeded examples
 export const CODE_REGION_OPENER = '```';
 export const CODE_REGION_CLOSER = '```';

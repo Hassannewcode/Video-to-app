@@ -13,7 +13,7 @@ import React, {
 } from 'react';
 import {Tab, TabList, TabPanel, Tabs} from 'react-tabs';
 
-import {parseHTML, parseJSON} from '@/lib/parse';
+import {parseJSON} from '@/lib/parse';
 import {
   ANALYZE_VIDEO_PROMPT,
   ANALYZE_VIDEO_SYSTEM_INSTRUCTION,
@@ -22,22 +22,32 @@ import {
   GENERATE_CODE_SYSTEM_INSTRUCTION,
   GENERATE_SPEC_FROM_ANALYSIS_PROMPT,
   GENERATE_SPEC_SYSTEM_INSTRUCTION,
+  REVIEW_CODE_PROMPT_PREFIX,
+  REVIEW_CODE_PROMPT_SUFFIX,
+  REVIEW_CODE_SYSTEM_INSTRUCTION,
   REVIEW_SPEC_AND_PLAN_PROMPT,
   REVIEW_SPEC_SYSTEM_INSTRUCTION,
 } from '@/lib/prompts';
 import {generateText} from '@/lib/textGeneration';
+import {File} from '@/lib/types';
 
 interface ContentContainerProps {
   contentBasis: string;
   preSeededSpec?: string;
-  preSeededCode?: string;
+  preSeededFiles?: File[];
   onLoadingStateChange?: (isLoading: boolean) => void;
+  onGenerationComplete?: (result: {
+    title: string;
+    spec: string;
+    files: File[];
+  }) => void;
 }
 
-interface File {
-  name: string;
-  content: string;
-}
+type ConsoleMessage = {
+  type: 'log' | 'warn' | 'error' | 'info';
+  args: any[];
+  timestamp: Date;
+};
 
 type GenerationStep =
   | 'idle'
@@ -45,6 +55,7 @@ type GenerationStep =
   | 'spec-generating'
   | 'planning'
   | 'coding'
+  | 'reviewing'
   | 'ready'
   | 'error';
 
@@ -54,6 +65,7 @@ const STEP_MESSAGES: Record<GenerationStep, string> = {
   'spec-generating': 'Generating app specification...',
   planning: 'Creating implementation plan...',
   coding: 'Generating code...',
+  reviewing: 'Reviewing and fixing code...',
   ready: 'Content ready!',
   error: 'An error occurred.',
 };
@@ -62,8 +74,9 @@ export default forwardRef(function ContentContainer(
   {
     contentBasis,
     preSeededSpec,
-    preSeededCode,
+    preSeededFiles,
     onLoadingStateChange,
+    onGenerationComplete,
   }: ContentContainerProps,
   ref,
 ) {
@@ -80,9 +93,11 @@ export default forwardRef(function ContentContainer(
   const [files, setFiles] = useState<File[]>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
 
-  // Render state
+  // Render and Console state
   const [renderHtml, setRenderHtml] = useState<string>('');
   const [iframeKey, setIframeKey] = useState(0);
+  const [consoleMessages, setConsoleMessages] = useState<ConsoleMessage[]>([]);
+  const [isReviewed, setIsReviewed] = useState(false);
 
   useImperativeHandle(ref, () => ({}));
 
@@ -92,6 +107,52 @@ export default forwardRef(function ContentContainer(
       onLoadingStateChange(isLoading);
     }
   }, [step, onLoadingStateChange]);
+
+  const CONSOLE_INJECT_SCRIPT = `
+    <script>
+      const originalConsole = { ...window.console };
+      function postMessageToParent(type, args) {
+        try {
+          // Naive serialization, handles basic types, arrays, and plain objects.
+          // Errors and complex objects might lose some data.
+          const serializedArgs = args.map(arg => {
+            if (arg instanceof Error) {
+              return { message: arg.message, stack: arg.stack, name: arg.name };
+            }
+            return arg;
+          });
+          window.parent.postMessage({
+              source: 'iframe-console',
+              type: type,
+              args: JSON.parse(JSON.stringify(serializedArgs))
+          }, '*');
+        } catch(e) {
+          originalConsole.error('Error posting message to parent:', e);
+          window.parent.postMessage({
+              source: 'iframe-console',
+              type: 'error',
+              args: ['Could not serialize message arguments for parent console.']
+          }, '*');
+        }
+      }
+      
+      Object.keys(originalConsole).forEach(key => {
+        if (typeof originalConsole[key] === 'function') {
+          console[key] = function(...args) {
+            originalConsole[key](...args);
+            postMessageToParent(key, args);
+          };
+        }
+      });
+
+      window.addEventListener('error', function(event) {
+          postMessageToParent('error', [event.message, 'at ' + event.filename + ':' + event.lineno + ':' + event.colno]);
+      });
+      window.addEventListener('unhandledrejection', event => {
+        postMessageToParent('error', ['Unhandled promise rejection:', event.reason]);
+      });
+    </script>
+  `;
 
   const buildPreviewHtml = (fileSet: File[]): string => {
     const htmlFile = fileSet.find(
@@ -106,7 +167,10 @@ export default forwardRef(function ContentContainer(
     const cssLinks = cssFiles
       .map((f) => `<style>\n${f.content}\n</style>`)
       .join('\n');
-    htmlContent = htmlContent.replace('</head>', `${cssLinks}\n</head>`);
+    htmlContent = htmlContent.replace(
+      '</head>',
+      `${CONSOLE_INJECT_SCRIPT}\n${cssLinks}\n</head>`,
+    );
 
     // Inject JS
     const jsFiles = fileSet.filter((f) => f.name.toLowerCase().endsWith('.js'));
@@ -119,14 +183,32 @@ export default forwardRef(function ContentContainer(
   };
 
   useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.source === 'iframe-console') {
+        const {type, args} = event.data;
+        setConsoleMessages((prev) => [
+          ...prev,
+          {type, args, timestamp: new Date()},
+        ]);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
+
+  useEffect(() => {
     async function generateContent() {
-      if (preSeededSpec && preSeededCode) {
+      setConsoleMessages([]); // Clear console on new generation
+
+      if (preSeededSpec && preSeededFiles) {
         setSpec(preSeededSpec);
-        const preSeededFiles = [
-          {name: 'index.html', content: preSeededCode},
-        ];
         setFiles(preSeededFiles);
-        setActiveFile('index.html');
+        const htmlFile = preSeededFiles.find(
+          (f) => f.name.toLowerCase() === 'index.html',
+        );
+        setActiveFile(htmlFile ? htmlFile.name : preSeededFiles[0]?.name);
         setRenderHtml(buildPreviewHtml(preSeededFiles));
         setStep('ready');
         return;
@@ -176,17 +258,99 @@ export default forwardRef(function ContentContainer(
           prompt: codePrompt,
         });
         const codeResult = parseJSON(codeResponse);
-        const generatedFiles = codeResult.files || [];
-        setFiles(generatedFiles);
+
+        setStep('reviewing');
+        const initialFiles = codeResult.files || [];
+
+        // Capture initial runtime errors by loading code in a hidden iframe
+        const capturedErrors: ConsoleMessage[] = await new Promise(
+          (resolve) => {
+            if (initialFiles.length === 0) {
+              resolve([]);
+              return;
+            }
+
+            const tempIframe = document.createElement('iframe');
+            tempIframe.style.display = 'none';
+            tempIframe.sandbox.add('allow-scripts');
+            const tempErrors: ConsoleMessage[] = [];
+
+            const handleTempMessage = (event: MessageEvent) => {
+              if (event.source !== tempIframe.contentWindow) return;
+              if (event.data && event.data.source === 'iframe-console') {
+                const {type, args} = event.data;
+                if (type === 'error') {
+                  tempErrors.push({type, args, timestamp: new Date()});
+                }
+              }
+            };
+            window.addEventListener('message', handleTempMessage);
+
+            const cleanupAndResolve = () => {
+              window.removeEventListener('message', handleTempMessage);
+              if (document.body.contains(tempIframe)) {
+                document.body.removeChild(tempIframe);
+              }
+              resolve(tempErrors);
+            };
+
+            tempIframe.onload = () => setTimeout(cleanupAndResolve, 1500);
+            tempIframe.onerror = cleanupAndResolve;
+            setTimeout(cleanupAndResolve, 3000); // Failsafe timeout
+
+            tempIframe.srcdoc = buildPreviewHtml(initialFiles);
+            document.body.appendChild(tempIframe);
+          },
+        );
+
+        let runtimeErrorsString = 'No runtime errors detected on initial load.';
+        if (capturedErrors.length > 0) {
+          runtimeErrorsString =
+            'The following runtime errors were detected on initial load:\n' +
+            capturedErrors
+              .map((e) =>
+                e.args
+                  .map((arg) =>
+                    typeof arg === 'object' ? JSON.stringify(arg) : String(arg),
+                  )
+                  .join(' '),
+              )
+              .join('\n');
+        }
+
+        const reviewPrompt = `${REVIEW_CODE_PROMPT_PREFIX}\n${specResponse}\n${REVIEW_CODE_PROMPT_SUFFIX}\n${JSON.stringify(
+          codeResult,
+          null,
+          2,
+        )}\n\nRUNTIME ERRORS:\n---\n${runtimeErrorsString}`;
+
+        const reviewedCodeResponse = await generateText({
+          modelName: 'gemini-2.5-flash',
+          systemInstruction: REVIEW_CODE_SYSTEM_INSTRUCTION,
+          prompt: reviewPrompt,
+        });
+
+        const reviewedCodeResult = parseJSON(reviewedCodeResponse);
+        const finalFiles = reviewedCodeResult.files || [];
+        setIsReviewed(true);
+        setFiles(finalFiles);
 
         // Set active file to index.html or the first file
-        const htmlFile = generatedFiles.find(
+        const htmlFile = finalFiles.find(
           (f: File) => f.name.toLowerCase() === 'index.html',
         );
-        setActiveFile(htmlFile ? htmlFile.name : generatedFiles[0]?.name);
+        setActiveFile(htmlFile ? htmlFile.name : finalFiles[0]?.name);
 
-        setRenderHtml(buildPreviewHtml(generatedFiles));
+        setRenderHtml(buildPreviewHtml(finalFiles));
         setStep('ready');
+
+        if (onGenerationComplete) {
+          onGenerationComplete({
+            title: analysisResult?.title || 'Generated App',
+            spec: specResponse,
+            files: finalFiles,
+          });
+        }
       } catch (err) {
         console.error('Error generating content:', err);
         setError(
@@ -197,7 +361,7 @@ export default forwardRef(function ContentContainer(
     }
 
     generateContent();
-  }, [contentBasis, preSeededSpec, preSeededCode]);
+  }, [contentBasis, preSeededSpec, preSeededFiles, onGenerationComplete]);
 
   useEffect(() => {
     if (renderHtml) {
@@ -244,6 +408,35 @@ export default forwardRef(function ContentContainer(
     </div>
   );
 
+  const ConsoleView = () => (
+    <div className="console-view">
+      <div className="console-header">
+        <span>Console</span>
+        <button onClick={() => setConsoleMessages([])}>Clear</button>
+      </div>
+      <div className="console-messages">
+        {consoleMessages.length === 0 ? (
+          <div className="console-message-empty">
+            Console is empty. Logs from the app will appear here.
+          </div>
+        ) : (
+          consoleMessages.map((msg, index) => (
+            <div key={index} className={`console-message ${msg.type}`}>
+              <span className="timestamp">{msg.timestamp.toLocaleTimeString()}</span>
+              <div className="message-content">
+                {msg.args.map((arg, i) => (
+                  <pre key={i}>
+                    {typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)}
+                  </pre>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="content-container-wrapper">
       <Tabs
@@ -259,6 +452,9 @@ export default forwardRef(function ContentContainer(
           </Tab>
           <Tab className="tab-item" selectedClassName="selected-tab">
             Spec
+          </Tab>
+          <Tab className="tab-item" selectedClassName="selected-tab">
+            Console
           </Tab>
         </TabList>
 
@@ -354,7 +550,20 @@ export default forwardRef(function ContentContainer(
                 {step === 'planning' && <div className="mini-loader"></div>}
                 {plan && <pre>{JSON.stringify(plan, null, 2)}</pre>}
               </SpecItem>
+              <SpecItem
+                title="4. Code Review & Fix"
+                currentStep={step === 'reviewing'}
+                completed={isReviewed}>
+                {step === 'reviewing' && <div className="mini-loader"></div>}
+                {isReviewed && <p>Code automatically reviewed and fixed using runtime console feedback.</p>}
+              </SpecItem>
             </div>
+          </TabPanel>
+
+          <TabPanel
+            className="tab-panel"
+            selectedClassName="selected-tab-panel">
+            <ConsoleView />
           </TabPanel>
         </div>
       </Tabs>
@@ -506,6 +715,9 @@ export default forwardRef(function ContentContainer(
           max-height: 300px;
           overflow-y: auto;
         }
+        .spec-item-content p {
+          color: var(--color-text-secondary);
+        }
         .spec-text {
           white-space: pre-wrap;
           font-family: var(--font-secondary);
@@ -571,6 +783,67 @@ export default forwardRef(function ContentContainer(
           margin-top: 1.5rem;
           font-size: 1.1rem;
         }
+
+        /* Console View */
+        .console-view {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          font-family: var(--font-technical);
+          font-size: 0.9rem;
+          background-color: #1e1e1e;
+        }
+        .console-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.5rem 1rem;
+          background-color: #252526;
+          border-bottom: 1px solid var(--color-border);
+          color: var(--color-text-secondary);
+        }
+        .console-header button {
+          background: none;
+          border: 1px solid var(--color-border);
+          color: var(--color-text-secondary);
+          padding: 0.25rem 0.75rem;
+          font-size: 0.8rem;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .console-messages {
+          flex: 1;
+          overflow-y: auto;
+          padding: 0.5rem;
+        }
+        .console-message {
+          display: flex;
+          gap: 1rem;
+          padding: 0.25rem 0.5rem;
+          border-bottom: 1px solid #333;
+        }
+        .console-message .timestamp {
+          color: #888;
+        }
+        .console-message.log { color: #ccc; }
+        .console-message.info { color: #3794ff; }
+        .console-message.warn { color: #f9c74f; }
+        .console-message.error { color: #f94144; }
+        .message-content {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        .message-content pre {
+          white-space: pre-wrap;
+          word-break: break-all;
+          margin: 0;
+        }
+        .console-message-empty {
+          color: #888;
+          padding: 1rem;
+        }
+
 
         /* Error State */
         .error-state {

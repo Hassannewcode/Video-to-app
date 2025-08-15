@@ -10,3 +10,17 @@ export interface Example {
   spec: string;
   code: string;
 }
+
+export interface File {
+  name: string;
+  content: string;
+}
+
+export interface HistoryItem {
+  id: number;
+  title: string;
+  videoUrl: string;
+  spec: string;
+  files: File[];
+  timestamp: string;
+}

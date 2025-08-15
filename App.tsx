@@ -6,10 +6,11 @@
 
 import ContentContainer from '@/components/ContentContainer';
 import ExampleGallery from '@/components/ExampleGallery';
+import HistoryGallery from '@/components/HistoryGallery';
 import {DataContext} from '@/context';
-import {Example} from '@/lib/types';
+import {Example, File, HistoryItem} from '@/lib/types';
 import {getYoutubeEmbedUrl, validateYoutubeUrl} from '@/lib/youtube';
-import {useContext, useRef, useState} from 'react';
+import {useContext, useEffect, useRef, useState} from 'react';
 
 // Whether to validate the input URL before attempting to generate content
 const VALIDATE_INPUT_URL = true;
@@ -37,6 +38,27 @@ export default function App() {
     PRESEED_CONTENT ? defaultExample : null,
   );
 
+  const [preSeededSpec, setPreSeededSpec] = useState<string | undefined>(
+    PRESEED_CONTENT ? defaultExample?.spec : undefined,
+  );
+  const [preSeededFiles, setPreSeededFiles] = useState<File[] | undefined>(
+    PRESEED_CONTENT
+      ? [{name: 'index.html', content: defaultExample?.code}]
+      : undefined,
+  );
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  useEffect(() => {
+    try {
+      const savedHistory = localStorage.getItem('videoAppHistory');
+      if (savedHistory) {
+        setHistory(JSON.parse(savedHistory));
+      }
+    } catch (e) {
+      console.error('Failed to load history from localStorage', e);
+    }
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !urlValidating && !contentLoading) {
       handleSubmit();
@@ -50,7 +72,44 @@ export default function App() {
     setError('');
     setVideoUrl(example.url);
     setSelectedExample(example);
+    setPreSeededSpec(example.spec);
+    setPreSeededFiles([{name: 'index.html', content: example.code}]);
     setReloadCounter((c) => c + 1);
+  };
+
+  const handleHistorySelect = (item: HistoryItem) => {
+    if (inputRef.current) {
+      inputRef.current.value = item.videoUrl;
+    }
+    setError('');
+    setVideoUrl(item.videoUrl);
+    setSelectedExample(null);
+    setPreSeededSpec(item.spec);
+    setPreSeededFiles(item.files);
+    setReloadCounter((c) => c + 1);
+  };
+
+  const handleClearHistory = () => {
+    setHistory([]);
+    localStorage.removeItem('videoAppHistory');
+  };
+
+  const handleGenerationComplete = (result: {
+    title: string;
+    spec: string;
+    files: File[];
+  }) => {
+    const newItem: HistoryItem = {
+      id: Date.now(),
+      title: result.title,
+      videoUrl: inputRef.current?.value.trim() || videoUrl,
+      spec: result.spec,
+      files: result.files,
+      timestamp: new Date().toISOString(),
+    };
+    const newHistory = [newItem, ...history].slice(0, 20); // Keep max 20 items
+    setHistory(newHistory);
+    localStorage.setItem('videoAppHistory', JSON.stringify(newHistory));
   };
 
   const handleSubmit = async () => {
@@ -68,6 +127,8 @@ export default function App() {
     setVideoUrl('');
     setContentLoading(false);
     setSelectedExample(null);
+    setPreSeededSpec(undefined);
+    setPreSeededFiles(undefined);
 
     const isPreSeededExample = [defaultExample, ...examples].some(
       (example) => example.url === inputValue,
@@ -154,6 +215,8 @@ export default function App() {
                   setError('');
                   setVideoUrl('');
                   setSelectedExample(null);
+                  setPreSeededFiles(undefined);
+                  setPreSeededSpec(undefined);
                 }}
               />
               <button
@@ -219,6 +282,11 @@ export default function App() {
             className="gallery-container desktop-gallery-container fade-in-up"
             style={{animationDelay: '0.4s'}}>
             {exampleGallery}
+            <HistoryGallery
+              history={history}
+              onSelectItem={handleHistorySelect}
+              onClearHistory={handleClearHistory}
+            />
           </div>
         </div>
 
@@ -231,8 +299,9 @@ export default function App() {
                 key={reloadCounter}
                 contentBasis={videoUrl}
                 onLoadingStateChange={handleContentLoadingStateChange}
-                preSeededSpec={selectedExample?.spec}
-                preSeededCode={selectedExample?.code}
+                preSeededSpec={preSeededSpec}
+                preSeededFiles={preSeededFiles}
+                onGenerationComplete={handleGenerationComplete}
                 ref={contentContainerRef}
               />
             ) : (
@@ -260,6 +329,11 @@ export default function App() {
             className="gallery-container mobile-gallery-container fade-in-up"
             style={{animationDelay: '0.6s'}}>
             {exampleGallery}
+            <HistoryGallery
+              history={history}
+              onSelectItem={handleHistorySelect}
+              onClearHistory={handleClearHistory}
+            />
           </div>
         </div>
       </main>
