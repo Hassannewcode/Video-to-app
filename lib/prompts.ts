@@ -5,7 +5,7 @@
 /* tslint:disable */
 
 export const ANALYZE_AND_PLAN_SYSTEM_INSTRUCTION = `You are an expert learning experience designer and a senior frontend engineer.`;
-export const ANALYZE_AND_PLAN_PROMPT = `Analyze the provided video content. Based on your analysis, design an interactive web app.
+export const ANALYZE_AND_PLAN_PROMPT = `Analyze the key concepts from the provided video content, focusing on the first 5 minutes to generate your response. Based on your analysis, design an interactive web app.
 Produce a single, valid JSON object and nothing else. The JSON object must contain the following keys:
 - "analysis": An object with the following fields:
   - "title": A concise, descriptive title for the potential web app.

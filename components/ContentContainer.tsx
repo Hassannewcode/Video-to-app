@@ -291,7 +291,7 @@ export default forwardRef(function ContentContainer(
         // Step 3: Iterative Code Review & Fixing Loop
         let currentFiles = codeResult.files || [];
         setFiles(currentFiles); // Show initial code in UI
-        const MAX_REVIEW_ATTEMPTS = 3;
+        const MAX_REVIEW_ATTEMPTS = 1;
         let reviewSuccess = false;
 
         for (let attempt = 1; attempt <= MAX_REVIEW_ATTEMPTS; attempt++) {
@@ -507,7 +507,7 @@ export default forwardRef(function ContentContainer(
               <CustomLoader
                 text={
                   step === 'reviewing'
-                    ? `Reviewing and fixing code (Attempt ${reviewAttempt} of 3)...`
+                    ? 'Reviewing and fixing code...'
                     : STEP_MESSAGES[step]
                 }
               />
@@ -533,7 +533,7 @@ export default forwardRef(function ContentContainer(
               <CustomLoader
                 text={
                   step === 'reviewing'
-                    ? `Reviewing and fixing code (Attempt ${reviewAttempt} of 3)...`
+                    ? 'Reviewing and fixing code...'
                     : STEP_MESSAGES[step]
                 }
               />
